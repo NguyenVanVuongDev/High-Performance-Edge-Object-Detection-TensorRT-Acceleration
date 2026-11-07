@@ -1,0 +1,12 @@
+{
+    "framework": "PyTorch (Python)",
+    "precision": "FP32",
+    "device": "Tesla T4",
+    "input_resolution": "1080p (Letterbox to 640x640)",
+    "iterations": 1000,
+    "throughput_fps": 82.03,
+    "mean_latency_ms": 12.19,
+    "latency_p50_ms": 12.17,
+    "latency_p95_ms": 12.55,
+    "peak_vram_mb": 119.38
+}

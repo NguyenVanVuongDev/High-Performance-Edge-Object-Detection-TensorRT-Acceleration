@@ -1,0 +1,23 @@
+cat << 'EOF' >> .gitignore
+# TensorRT & Model weights
+*.engine
+*.plan
+*.onnx
+*.pt
+*.bin
+
+# Build artifacts & libraries
+build/
+bin/
+*.so
+*.dll
+*.exe
+
+data/
+
+# Python & C++ cache
+__pycache__/
+*.pyc
+.cache/
+.vscode/
+EOF
