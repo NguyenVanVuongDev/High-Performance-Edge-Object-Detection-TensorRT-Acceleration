@@ -1,5 +1,7 @@
 import os
 import glob
+import argparse
+from pathlib import Path
 import cv2
 import numpy as np
 import torch
@@ -65,7 +67,7 @@ class YOLOEntropyCalibrator(trt.IInt8EntropyCalibrator2):
         with open(self.cache_file, "wb") as f:
             f.write(cache)
 
-def build_int8_engine():
+def build_int8_engine(onnx_file, engine_file, cache_file, calibration_dir, max_images, workspace_gb):
     TRT_LOGGER = trt.Logger(trt.Logger.INFO)
     builder = trt.Builder(TRT_LOGGER)
     config = builder.create_builder_config()
@@ -77,10 +79,14 @@ def build_int8_engine():
         
     parser = trt.OnnxParser(network, TRT_LOGGER)
     
-    onnx_file = "/kaggle/working/tensorrt-yolo-edge-acceleration/models/yolov8s.onnx"
-    engine_file = "/kaggle/working/tensorrt-yolo-edge-acceleration/models/engines/yolov8s_int8.engine"
-    cache_file = "/kaggle/working/tensorrt-yolo-edge-acceleration/models/engines/calibration.cache"
-    calib_images = sorted(glob.glob("/kaggle/working/tensorrt-yolo-edge-acceleration/data/calibration/*.jpg"))
+    calib_images = []
+    for extension in ("*.jpg", "*.jpeg", "*.png", "*.bmp"):
+        calib_images.extend(glob.glob(os.path.join(calibration_dir, extension)))
+    calib_images = sorted(calib_images)[:max_images]
+    if not calib_images:
+        raise FileNotFoundError(f"No calibration images found in: {calibration_dir}")
+    if not os.path.isfile(onnx_file):
+        raise FileNotFoundError(f"ONNX model not found: {onnx_file}")
 
     with open(onnx_file, "rb") as f:
         if not parser.parse(f.read()):
@@ -88,37 +94,41 @@ def build_int8_engine():
                 print(parser.get_error(error))
             raise RuntimeError("Lỗi parse file ONNX!")
 
-    # Khắc phục triệt để: Kiểm tra hasattr trước khi gọi BuilderFlag
-    if hasattr(trt, 'BuilderFlag') and hasattr(trt.BuilderFlag, 'INT8'):
-        config.set_flag(trt.BuilderFlag.INT8)
-    if hasattr(trt, 'BuilderFlag') and hasattr(trt.BuilderFlag, 'FP16'):
+    if not hasattr(trt, "BuilderFlag") or not hasattr(trt.BuilderFlag, "INT8"):
+        raise RuntimeError("This TensorRT installation does not expose INT8 builder support")
+    config.set_flag(trt.BuilderFlag.INT8)
+    if hasattr(trt.BuilderFlag, "FP16"):
         config.set_flag(trt.BuilderFlag.FP16)
-        
-    if hasattr(config, 'int8_calibrator'):
-        config.int8_calibrator = YOLOEntropyCalibrator(calib_images, cache_file)
-    
-    if hasattr(trt, 'MemoryPoolType'):
-        config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 4 << 30)
-    else:
-        config.max_workspace_size = 4 << 30
+    if not hasattr(config, "int8_calibrator"):
+        raise RuntimeError("This TensorRT installation does not support Python INT8 calibrators")
+    config.int8_calibrator = YOLOEntropyCalibrator(calib_images, cache_file)
 
-    print("--- Bắt đầu Calibration & Compile INT8 Engine ---")
-    try:
-        plan = builder.build_serialized_network(network, config)
-    except Exception as e:
-        print(f"Warning with explicit INT8 calibration: {e}")
-        plan = None
-        
+    if hasattr(trt, 'MemoryPoolType'):
+        config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, int(workspace_gb * (1 << 30)))
+    else:
+        config.max_workspace_size = int(workspace_gb * (1 << 30))
+
+    print(f"--- Building INT8 engine with {len(calib_images)} calibration images ---")
+    plan = builder.build_serialized_network(network, config)
     if plan is None:
-        print("[INT8] Building engine with fallback configuration...")
-        cfg_fb = builder.create_builder_config()
-        if hasattr(trt, 'MemoryPoolType'):
-            cfg_fb.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 4 << 30)
-        plan = builder.build_serialized_network(network, cfg_fb)
-        
+        raise RuntimeError("TensorRT failed to build the INT8 engine; see TensorRT log above")
+
+    os.makedirs(os.path.dirname(os.path.abspath(engine_file)), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(cache_file)), exist_ok=True)
     with open(engine_file, "wb") as f:
         f.write(plan)
     print(f"Đã lưu INT8 Engine thành công tại: {engine_file}")
 
 if __name__ == "__main__":
-    build_int8_engine()
+    repo_root = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description="Build a TensorRT INT8 engine using representative images.")
+    parser.add_argument("--onnx", default=str(repo_root / "models" / "yolov8s.onnx"))
+    parser.add_argument("--calibration-dir", default=str(repo_root / "data" / "calibration"))
+    parser.add_argument("--output", default=str(repo_root / "models" / "engines" / "yolov8s_int8.engine"))
+    parser.add_argument("--cache", default=str(repo_root / "models" / "engines" / "calibration.cache"))
+    parser.add_argument("--max-images", type=int, default=500)
+    parser.add_argument("--workspace-gb", type=float, default=4.0)
+    args = parser.parse_args()
+    if args.max_images < 1 or args.workspace_gb <= 0:
+        parser.error("--max-images and --workspace-gb must be positive")
+    build_int8_engine(args.onnx, args.output, args.cache, args.calibration_dir, args.max_images, args.workspace_gb)

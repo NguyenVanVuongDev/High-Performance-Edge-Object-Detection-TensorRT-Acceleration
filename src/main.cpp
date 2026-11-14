@@ -208,10 +208,10 @@ int main(int argc, char** argv) {
 
         cv::Mat frame;
         LetterboxInfo info;
-        // Warm-up 15 vòng trên frame đầu
+        // Warm-up 100 vòng trên frame đầu
         if (cap.read(frame) && !frame.empty()) {
             float dummy_pre = 0, dummy_inf = 0;
-            for (int w = 0; w < 15; ++w) {
+            for (int w = 0; w < 100; ++w) {
                 engine.inferFusedGPU(frame, info, dummy_pre, dummy_inf);
             }
             cap.set(cv::CAP_PROP_POS_FRAMES, 0);
@@ -307,8 +307,8 @@ int main(int argc, char** argv) {
     }
 
     LetterboxInfo info;
-    // Warm-up 25 iterations
-    for (int i = 0; i < 25; ++i) {
+    // Warm-up 100 iterations
+    for (int i = 0; i < 100; ++i) {
         if (use_cpu_pre) {
             Preprocessor::processCPU(image, engine.getHostInput(), info);
             engine.inferAsyncCPUInput();

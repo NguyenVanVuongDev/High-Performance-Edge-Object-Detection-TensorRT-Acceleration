@@ -1,0 +1,29 @@
+model:
+	name: yolov8s
+	input_width: 640
+	input_height: 640
+	batch_size: 1
+	num_classes: 80
+	num_anchors: 8400
+
+preprocess:
+	color_order: RGB
+	tensor_layout: NCHW
+	normalization: 255.0
+	letterbox_value: 114
+
+postprocess:
+	confidence_threshold: 0.25
+	nms_threshold: 0.45
+
+benchmark:
+	warmup_iterations: 100
+	measured_iterations: 2000
+
+paths:
+	weights: models/yolov8s.pt
+	onnx: models/yolov8s.onnx
+	engines: models/engines
+	calibration_images: data/calibration
+	validation_images: data/val2017
+	benchmark_results: benchmarks
