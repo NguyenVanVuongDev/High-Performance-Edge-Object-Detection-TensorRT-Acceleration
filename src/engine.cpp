@@ -1,11 +1,18 @@
 #include "engine.h"
+#include "preprocess.h"
 #include <fstream>
 #include <iostream>
+#include <cstring>
 
 TRTEngine::TRTEngine() {}
 
 TRTEngine::~TRTEngine() {
+    if (ev_start_) cudaEventDestroy(ev_start_);
+    if (ev_after_pre_) cudaEventDestroy(ev_after_pre_);
+    if (ev_after_infer_) cudaEventDestroy(ev_after_infer_);
     if (stream_) cudaStreamDestroy(stream_);
+    if (device_raw_img_) cudaFree(device_raw_img_);
+    if (host_raw_img_) cudaFreeHost(host_raw_img_);
     if (device_input_) cudaFree(device_input_);
     if (device_output_) cudaFree(device_output_);
     if (host_input_) cudaFreeHost(host_input_);
@@ -39,17 +46,19 @@ bool TRTEngine::load(const std::string& engine_path) {
     context_ = engine_->createExecutionContext();
     if (!context_) return false;
 
-    cudaStreamCreate(&stream_);
+    cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking);
+    cudaEventCreate(&ev_start_);
+    cudaEventCreate(&ev_after_pre_);
+    cudaEventCreate(&ev_after_infer_);
 
-    // Cấp phát Host Pinned Memory (Zero-copy / Fast DMA transfer)
     cudaMallocHost((void**)&host_input_, input_size_);
     cudaMallocHost((void**)&host_output_, output_size_);
-
-    // Cấp phát Device VRAM
     cudaMalloc(&device_input_, input_size_);
     cudaMalloc(&device_output_, output_size_);
 
-    // Lấy tên I/O tensors (Hỗ trợ TensorRT 10.x & 11.x)
+    cudaMallocHost((void**)&host_raw_img_, max_raw_bytes_);
+    cudaMalloc((void**)&device_raw_img_, max_raw_bytes_);
+
     int nb_io = engine_->getNbIOTensors();
     for (int i = 0; i < nb_io; ++i) {
         const char* name = engine_->getIOTensorName(i);
@@ -60,22 +69,65 @@ bool TRTEngine::load(const std::string& engine_path) {
         }
     }
 
-    // Set địa chỉ tensor cho context (API chuẩn enqueueV3)
     context_->setInputTensorAddress(input_name_, device_input_);
     context_->setOutputTensorAddress(output_name_, device_output_);
 
-    std::cout << "[Engine] Successfully loaded: " << engine_path << std::endl;
+    std::cout << "[Engine] Loaded: " << engine_path
+              << " | IO Tensors: " << input_name_ << " -> " << output_name_ << std::endl;
     return true;
 }
 
-void TRTEngine::inferAsync() {
-    // 1. Host -> Device Copy bất đồng bộ
-    cudaMemcpyAsync(device_input_, host_input_, input_size_, cudaMemcpyHostToDevice, stream_);
+void TRTEngine::inferFusedGPU(const cv::Mat& src, LetterboxInfo& info, float& out_pre_ms, float& out_infer_ms) {
+    info = Preprocessor::computeLetterboxInfo(src.cols, src.rows, 640, 640);
 
-    // 2. Enqueue Kernel thực thi trên GPU
+    size_t raw_bytes = src.step[0] * src.rows;
+    if (raw_bytes > max_raw_bytes_) {
+        cudaFreeHost(host_raw_img_);
+        cudaFree(device_raw_img_);
+        max_raw_bytes_ = raw_bytes;
+        cudaMallocHost((void**)&host_raw_img_, max_raw_bytes_);
+        cudaMalloc((void**)&device_raw_img_, max_raw_bytes_);
+    }
+
+    // Copy nhanh vào Pinned Memory để DMA H2D đạt tốc độ tối đa
+    std::memcpy(host_raw_img_, src.data, raw_bytes);
+
+    cudaEventRecord(ev_start_, stream_);
+
+    // 1. Copy ảnh uint8_t thô từ Host Pinned -> Device VRAM
+    cudaMemcpyAsync(device_raw_img_, host_raw_img_, raw_bytes, cudaMemcpyHostToDevice, stream_);
+
+    // 2. Chạy Fused CUDA Kernel Tiền xử lý ngay trên GPU
+    Preprocessor::launchPreprocessKernel(
+        device_raw_img_,
+        src.cols,
+        src.rows,
+        (int)src.step[0],
+        (float*)device_input_,
+        640,
+        640,
+        info,
+        stream_
+    );
+    cudaEventRecord(ev_after_pre_, stream_);
+
+    // 3. Thực thi TensorRT Engine trực tiếp trên device_input_ đã nằm sẵn trong VRAM
     context_->enqueueV3(stream_);
 
-    // 3. Device -> Host Copy kết quả
+    // 4. Copy kết quả output0 [1, 84, 8400] về Pinned Host Memory
+    cudaMemcpyAsync(host_output_, device_output_, output_size_, cudaMemcpyDeviceToHost, stream_);
+    cudaEventRecord(ev_after_infer_, stream_);
+
+    // Đồng bộ 1 lần duy nhất ở cuối chuỗi GPU
+    cudaStreamSynchronize(stream_);
+
+    cudaEventElapsedTime(&out_pre_ms, ev_start_, ev_after_pre_);
+    cudaEventElapsedTime(&out_infer_ms, ev_after_pre_, ev_after_infer_);
+}
+
+void TRTEngine::inferAsyncCPUInput() {
+    cudaMemcpyAsync(device_input_, host_input_, input_size_, cudaMemcpyHostToDevice, stream_);
+    context_->enqueueV3(stream_);
     cudaMemcpyAsync(host_output_, device_output_, output_size_, cudaMemcpyDeviceToHost, stream_);
 }
 

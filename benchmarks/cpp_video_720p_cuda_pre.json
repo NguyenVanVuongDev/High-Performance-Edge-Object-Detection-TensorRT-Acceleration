@@ -1,0 +1,16 @@
+{
+  "mode": "Video_720p_CUDA_Pre",
+  "engine": "/kaggle/working/tensorrt-yolo-edge-acceleration/models/engines/yolov8s_fp16.engine",
+  "iterations": 150,
+  "pre_ms": 0.3118,
+  "infer_ms": 4.7754,
+  "post_ms": 0.9272,
+  "e2e_ms": 6.3253,
+  "p50_infer_ms": 4.7536,
+  "p95_infer_ms": 5.1114,
+  "p50_e2e_ms": 6.2264,
+  "p95_e2e_ms": 6.9805,
+  "p99_e2e_ms": 7.6297,
+  "fps": 158.0955,
+  "num_detections": 1
+}

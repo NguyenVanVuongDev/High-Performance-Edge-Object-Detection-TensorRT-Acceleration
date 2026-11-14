@@ -1,0 +1,16 @@
+{
+  "mode": "CPU_Preprocess",
+  "engine": "/kaggle/working/tensorrt-yolo-edge-acceleration/models/engines/yolov8s_fp16.engine",
+  "iterations": 500,
+  "pre_ms": 1.3934,
+  "infer_ms": 3.1323,
+  "post_ms": 0.8210,
+  "e2e_ms": 5.3467,
+  "p50_infer_ms": 3.0484,
+  "p95_infer_ms": 3.4670,
+  "p50_e2e_ms": 5.2625,
+  "p95_e2e_ms": 5.7049,
+  "p99_e2e_ms": 7.5001,
+  "fps": 187.0309,
+  "num_detections": 5
+}

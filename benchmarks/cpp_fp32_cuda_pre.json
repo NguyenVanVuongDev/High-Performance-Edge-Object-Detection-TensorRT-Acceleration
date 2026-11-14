@@ -1,0 +1,16 @@
+{
+  "mode": "CUDA_Fused_Preprocess",
+  "engine": "/kaggle/working/tensorrt-yolo-edge-acceleration/models/engines/yolov8s_fp32.engine",
+  "iterations": 300,
+  "pre_ms": 0.2877,
+  "infer_ms": 7.5910,
+  "post_ms": 0.8645,
+  "e2e_ms": 8.9806,
+  "p50_infer_ms": 7.5820,
+  "p95_infer_ms": 7.7420,
+  "p50_e2e_ms": 8.9341,
+  "p95_e2e_ms": 9.2950,
+  "p99_e2e_ms": 9.9929,
+  "fps": 111.3515,
+  "num_detections": 5
+}
